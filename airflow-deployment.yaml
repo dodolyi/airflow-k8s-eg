@@ -1,0 +1,109 @@
+# 경고: 이 설정은 테스트 및 개발용입니다.
+# 운영 환경에서는 SQLite 사용을 절대 권장하지 않습니다.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce # 대부분의 스토리지 클래스에서 지원
+  resources:
+    requests:
+      storage: 1Gi # 필요에 따라 크기 조절
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  labels:
+    app: airflow
+    component: scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+      component: scheduler
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: scheduler
+    spec:
+      containers:
+      - name: scheduler
+        image: apache/airflow:3.0.3
+        command: ["airflow", "scheduler"]
+        env:
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: KubernetesExecutor
+        - name: AIRFLOW__KUBERNETES__NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # SQLite DB 파일, DAGs, Logs를 공유 볼륨에 저장
+        volumeMounts:
+        - name: airflow-data
+          mountPath: /opt/airflow
+      volumes:
+      - name: airflow-data
+        persistentVolumeClaim:
+          claimName: airflow-data-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-webserver
+  labels:
+    app: airflow
+    component: webserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+      component: webserver
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: webserver
+    spec:
+      containers:
+      - name: webserver
+        image: apache/airflow:3.0.3
+        command: ["airflow", "webserver"]
+        ports:
+        - containerPort: 8080
+        env:
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: KubernetesExecutor
+        - name: AIRFLOW__KUBERNETES__NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # SQLite DB 파일, DAGs, Logs를 공유 볼륨에 저장
+        volumeMounts:
+        - name: airflow-data
+          mountPath: /opt/airflow
+      volumes:
+      - name: airflow-data
+        persistentVolumeClaim:
+          claimName: airflow-data-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-webserver
+  labels:
+    app: airflow
+    component: webserver
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: airflow
+    component: webserver
+  type: ClusterIP # 외부 노출을 원하면 NodePort 또는 LoadBalancer로 변경
